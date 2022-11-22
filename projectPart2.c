@@ -7,11 +7,13 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pcap.h>
 #include <errno.h>
 #include <arpa/inet.h>
 #include "jsmn.h"
 #include "JsonParse.h"
 #include <netinet/tcp.h>
+#include <sys/time.h>
 
 // define the ip header structure
 /* IP Header */
@@ -63,6 +65,18 @@ struct tcpheader
 }; /* total tcp header length: 20 bytes (=160 bits) */
 
 config c;
+
+// use the time library to get the current time in milliseconds
+long long millis()
+{
+    struct timeval te;
+    gettimeofday(&te, NULL); // get current time
+    // this structure also has nano seconds if we need it  te.tv_nsec
+    long long milliseconds = te.tv_sec * 1000LL + te.tv_usec / 1000; // calculate milliseconds
+    // printf("milliseconds: %lld\n", milliseconds);
+    return milliseconds;
+}
+
 /*
 
   1. open raw socket to SYN HEAD PORT
@@ -103,7 +117,7 @@ void setupIPandTCPHeader(struct ipheader *iph, struct tcpheader *tcph, struct so
     iph->ip_p = 6;
     iph->ip_sum = 0; /* set it to 0 before computing the actual checksum later */
     // TODO can this be anything? or should it also be the localhost addrSynHead
-    iph->ip_src = inet_addr("1.2.3.4"); /* SYN's can be blindly spoofed */
+    iph->ip_src = inet_addr("127.0.0.1"); /* SYN's can be blindly spoofed */
     iph->ip_dst = addrSynHead.sin_addr.s_addr;
     tcph->th_sport = htons(1234); /* arbitrary port */
     tcph->th_dport = htons(destPort);
@@ -178,6 +192,22 @@ void sendPacketTrain(int sockfd, config c, struct sockaddr_in *servaddr, char *d
     printf("Sent packet train...\n");
 }
 
+void sendSYNPacket(int sockId,struct ipheader *iph, struct tcpheader *tcph, struct sockaddr_in addrSynHead, char *datagram, int destPort){
+  // fill in the tcp and ip header information
+    setupIPandTCPHeader(iph, tcph, addrSynHead, datagram, destPort);
+    // at this point the way the pointers are setup the the ip and tcp header information SHOULD BE IN THE DATAGRAM
+    // send low entropy packet train
+     // send the tcp message
+    if (sendto(sockId, datagram, iph->ip_len, 0, (struct sockaddr *)&addrSynHead, sizeof(addrSynHead)) < 0)
+    {
+        printf("error: could not send TCP Syn Head on raw socket\n");
+    }
+    else
+    {
+        printf("sent TCP Syn to port: %d\n", destPort);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     //----LOAD JSON CONFIG FROM FILE
@@ -188,71 +218,52 @@ int main(int argc, char *argv[])
     char *JSON_STRING = loadJSONConfigStringFromFile(argv[1]);
     loadConfigStructFromConfigJSONString(JSON_STRING, &c);
 
+    //--setup socket info and options
+
+     struct sockaddr_in addrSynHead;
+    // setup SYN head address info
+    addrSynHead.sin_family = AF_INET;
+    addrSynHead.sin_port = htons(c.destPortTCPHead);
+    addrSynHead.sin_addr.s_addr = inet_addr(c.IP);
+
+     // setup the UDP socket information
+    struct sockaddr_in addrUDP;
+    addrUDP.sin_family = AF_INET;
+    // TODO on the PDF the port is 9999 but should this come from the config file?
+    addrUDP.sin_port = htons(c.destPort);
+    addrUDP.sin_addr.s_addr = inet_addr(c.IP);
+
+    struct sockaddr_in addrSynTail;
+    // setup SYN head address info
+    addrSynTail.sin_family = AF_INET;
+    addrSynTail.sin_port = htons(c.destPortTCPTail);
+    addrSynTail.sin_addr.s_addr = inet_addr(c.IP);
+
     // printf("SYN Head: %d   SYN Tail: %d\n", c.destPortTCPHead, c.destPortTCPTail);
 
     //------ OPEN ALL 3 SOCKETS -----
 
     //--- TCP RAW SOCKET TO SYN HEAD ----
     // NOTE: in order to open a RAW socket run the program with "sudo"
-    int rawSockSYNHead = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
+    int rawSockSYNHead = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
     if (rawSockSYNHead < 0)
     {
         printf("Unable to create a socket\n");
         exit(0);
     }
-    /* this buffer will contain ip header, tcp header,
-               and payload. we'll point an ip header structure
-               at its beginning, and a tcp header structure after
-               that to write the header values into it */
-    char datagram[4096];
-    // the ip header structure holds bytes (which is a char) so we're allowed to point
-    // to the start of the datagram byte array
-    // After printing out  sizeof(struct ipheader) we see that an IP HEADER is 20 bytes
-    // so we can assume that the first 20 bytes in the datagram array
-    // hold the ip header information
-    struct ipheader *iph = (struct ipheader *)datagram;
-    // After the first 20 bytes, comes the tcpheader so point the tcpheader structure to that part
-    // of the datagram
-    struct tcpheader *tcph = (struct tcpheader *)datagram + sizeof(struct ipheader);
-    // make variable to hold SYN head address/port information
-    struct sockaddr_in addrSynHead;
-    // setup SYN head address info
-    addrSynHead.sin_family = AF_INET;
-    addrSynHead.sin_port = htons(c.destPortTCPHead);
-    addrSynHead.sin_addr.s_addr = inet_addr(c.IP);
-    /* zero out the buffer */
-    memset(datagram, 0, 4096);
 
-    // fill in the tcp and ip header information
-    setupIPandTCPHeader(iph, tcph, addrSynHead, datagram, c.destPortTCPHead);
-    // at this point the way the pointers are setup the the ip and tcp header information SHOULD BE IN THE DATAGRAM
-
-    // lets set the socket options so that the default IP and TCP header options are not automatically added
+     // lets set the socket options so that the default IP and TCP header options are not automatically added
     // in front of all the options we just set
     // the setsockopt function wants a "const int *" so we need to make a variable that way we can make
     // a const int * to it
     int one = 1;
     if (setsockopt(rawSockSYNHead, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     {
-        printf("Warning: Cannot set HDRINCL!\n");
+        printf("Warning: Cannot set HDRINCL in head!\n");
         exit(1); // leave the program
     }
 
-    // send the tcp message
-    if (sendto(rawSockSYNHead, datagram, iph->ip_len, 0, (struct sockaddr *)&addrSynHead, sizeof(addrSynHead)) < 0)
-    {
-        printf("error: could not send TCP Syn Head on raw socket\n");
-    }
-    else
-    {
-        printf("sent TCP Syn Head on raw socket\n");
-    }
-
-    // and then try to receive the RST packet?
-    // Do we use pcap library to setup "sniffing" on the default device and then filter for tcp-rst ?
-    // https://www.tcpdump.org/pcap.html
-
-    //--- UDP SOCKET FOR UDP PACKET TRAIN ----
+     //--- UDP SOCKET FOR UDP PACKET TRAIN ----
     // Creating socket file descriptor
     int sockUDP;
     if ((sockUDP = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -274,6 +285,42 @@ int main(int argc, char *argv[])
         printf("Could not set sockopt for TTL\n");
         //exit(1);
     }
+
+ //--- TCP RAW SOCKET TO SYN HEAD ----
+    // NOTE: in order to open a RAW socket run the program with "sudo"
+    int rawSockSYNTail = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+    if (rawSockSYNTail < 0)
+    {
+        printf("Unable to create tail socket\n");
+        exit(0);
+    }
+
+    one = 1;
+    if (setsockopt(rawSockSYNTail, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
+    {
+        printf("Warning: Cannot set HDRINCL in tail!\n");
+        exit(1); // leave the program
+    }
+
+    //---- SEND UDP PACKET TRAIN----
+    /* this buffer will contain ip header, tcp header,
+               and payload. we'll point an ip header structure
+               at its beginning, and a tcp header structure after
+               that to write the header values into it */
+    char datagram[4096];
+    // the ip header structure holds bytes (which is a char) so we're allowed to point
+    // to the start of the datagram byte array
+    // After printing out  sizeof(struct ipheader) we see that an IP HEADER is 20 bytes
+    // so we can assume that the first 20 bytes in the datagram array
+    // hold the ip header information
+    struct ipheader *iph = (struct ipheader *)datagram;
+    // After the first 20 bytes, comes the tcpheader so point the tcpheader structure to that part
+    // of the datagram
+    struct tcpheader *tcph = (struct tcpheader *)datagram + sizeof(struct ipheader);
+    // make variable to hold SYN head address/port information   
+    /* zero out the buffer */
+    memset(datagram, 0, 4096);
+
 
     //--------PREPARE THE CHARCTER BUFFERS FOR LOW AND HIGH ENTROPY----------
     // prepare the UDP PAYLOAD options, we will add the ID's in front of this
@@ -309,25 +356,61 @@ int main(int argc, char *argv[])
     }
     // printf("\n");
 
-    // setup the UDP socket information
-    struct sockaddr_in addrUDP;
-    addrUDP.sin_family = AF_INET;
-    // TODO on the PDF the port is 9999 but should this come from the config file?
-    addrUDP.sin_port = htons(9999);
-    addrUDP.sin_addr.s_addr = inet_addr(c.IP);
+   
 
     //-------SEND THE ENTROPY PACKET TRAINS
-    // send low entropy packet train
+    memset(datagram, 0, 4096);
+    sendSYNPacket(rawSockSYNHead,iph,tcph,addrSynHead,datagram,c.destPortTCPHead);
+    long long startTime = millis();
+
     sendPacketTrain(sockUDP, c, &addrUDP, lowEntropy, c.numUDPPackets);
+
+     memset(datagram, 0, 4096);
+    sendSYNPacket(rawSockSYNHead,iph,tcph,addrSynTail,datagram,c.destPortTCPTail);
+    long long timeLowEntropy = millis() - startTime;
+
+
     //
-    int timeLeft = c.interMeasurementTime;
+   int timeLeft = c.interMeasurementTime;
     while (timeLeft)
     {
         sleep(1);
         timeLeft--;
         printf("Waiting %d seconds to send second packet train...\n", timeLeft);
     }
+
+
+    //clear the datagram to send the other packet's ip header information correctly
+    memset(datagram, 0, 4096);
+    sendSYNPacket(rawSockSYNHead,iph,tcph,addrSynHead,datagram,c.destPortTCPHead);
+    startTime = millis();
+
     sendPacketTrain(sockUDP, c, &addrUDP, highEntropy, c.numUDPPackets);
 
-    //--- TCP RAW SOCKET TO SYN TAIL ---
+    memset(datagram, 0, 4096);
+    sendSYNPacket(rawSockSYNHead,iph,tcph,addrSynTail,datagram,c.destPortTCPTail);
+    long long timeHighEntropy = millis() - startTime;
+
+    //print time info
+    long long timeDifference = timeHighEntropy - timeLowEntropy;
+    //set the time difference and then check to see if it might be wrong
+    //because lowEntropyTime was greater than high
+    if (timeLowEntropy > timeHighEntropy){
+        timeDifference = -1;
+        printf("The low entropy time was greater than high\n");
+    }
+
+    printf("Low Entropy: %llu\n", timeLowEntropy);
+    printf("High Entropy: %llu\n", timeHighEntropy);
+    printf("Time Difference:  %llu\n", timeDifference); 
+    
+  
+
+    close(rawSockSYNHead);
+    shutdown(rawSockSYNHead, SHUT_RDWR);
+    close(sockUDP);
+    shutdown(sockUDP, SHUT_RDWR);
+    close(rawSockSYNTail);
+    shutdown(rawSockSYNTail, SHUT_RDWR);
+
 }
