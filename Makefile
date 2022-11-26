@@ -20,7 +20,7 @@ raw:
 	gcc -g -o rawSocketListen rawSocketListen.c 
 
 run:
-	sudo ./$(PROG) config.json
+	sudo ./$(PROG)
 
 clean:
 	rm -rf projectPart2
