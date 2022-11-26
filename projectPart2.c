@@ -273,11 +273,18 @@ int main(int argc, char *argv[])
     }
 
     //  set the dont fragment flag
-    int val = 1;
+    //this failed 
+   /* int val = 1;
     if ( setsockopt(sockUDP, IPPROTO_IP, IP_DF, &val, sizeof(val)) < 0){
         printf("Could not set sockopt for DONT FRAGMENT FLAG\n");
         //exit(1);
-    }
+    }*/
+    int val = IP_PMTUDISC_DO;
+    if(setsockopt(sockUDP, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val)) < 0) {
+        printf("Could not set sockopt for DONT FRAGMENT FLAG\n");
+            // exit(1);
+    };
+
 
     // set the TTL time
     int ttl = c.UDPPacketTTL; /* max = 255 */
@@ -408,9 +415,6 @@ int main(int argc, char *argv[])
 
     close(rawSockSYNHead);
     shutdown(rawSockSYNHead, SHUT_RDWR);
-    close(sockUDP);
-    shutdown(sockUDP, SHUT_RDWR);
-    close(rawSockSYNTail);
-    shutdown(rawSockSYNTail, SHUT_RDWR);
+
 
 }

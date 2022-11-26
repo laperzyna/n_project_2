@@ -16,6 +16,9 @@ $(PROG): $(PROG).c JsonParse.h
 pcap:
 	gcc -g -o pcapTest pcapTest.c -lpcap $(PCAP)
 
+raw:
+	gcc -g -o rawSocketListen rawSocketListen.c 
+
 run:
 	sudo ./$(PROG) config.json
 
