@@ -1,4 +1,8 @@
 
+/* JsonParse.h builds off of our parser, jsmn.h. This file holds functions
+that essentially get the contents of the config filen and return them in the type
+they along with their corresponding variable so that they may be used.
+*/
 
 #include <string.h>
 #include <stdlib.h>
@@ -28,12 +32,6 @@ typedef struct config
 #define MAX_NUM_TOKENS 50
 jsmn_parser p;
 // This is an array of tokens
-// A token saves the start position of a key and a value
-// Ex:
-//"IP" : "127.0.0.01"
-// This would be a 2 index jsmntok_t array
-// where tokens[0] holds where the key starts
-// and tokens[1] holds where the value starts
 jsmntok_t tokens[MAX_NUM_TOKENS]; /* We expect no more than 128 tokens */
 
 int jsoneq(const char *json, jsmntok_t *tok, const char *s)
@@ -46,14 +44,11 @@ int jsoneq(const char *json, jsmntok_t *tok, const char *s)
     return -1;
 }
 
-// pass in the structure as a pointer so that when we change the values
-// it sticks
+/* we pass in the structure as a pointer so that when we change the values it sticks */
 void initializeConfig(config *c)
 {
-
     // IP is a char array, if we don't put anything in the length is still 0 so
     // just check length to see if we filled it
-    // config c;
     c->sourcePort = -1;
     c->destPort = -1;
     c->destPortTCPHead = -1;
@@ -63,7 +58,6 @@ void initializeConfig(config *c)
     c->interMeasurementTime = -1;
     c->numUDPPackets = -1;
     c->UDPPacketTTL = -1;
-    // return c;
 }
 
 // This function takes in a "string" that holds JSON data
@@ -82,6 +76,7 @@ int parseJSONFromString(char *JSON_STRING)
     return res;
 }
 
+/* saves JSON string */
 void getStringFromJSON(char *json, char *saveString, int idxOfKeyInTArray)
 {
     //"json" starts at the beginning of the JSON String pointer
@@ -94,6 +89,7 @@ void getStringFromJSON(char *json, char *saveString, int idxOfKeyInTArray)
     saveString[numLetters] = '\0';
 }
 
+/* saves JSON int */
 int getIntFromJSON(char *json, int i)
 {
     char saveString[MAX_SIZE_CONFIG_STRING];
@@ -194,13 +190,6 @@ void loadConfigStructFromConfigJSONString(char *jsonConfigString, config *c)
         }
         else
         {
-            // the jsonConfigString doesn't have null terminating character until the end
-            // so this would print the entire rest of the string after our bad Key
-            // Lets specify to the printf how many characters to print by passing in a number
-            // before the actual string to print
-
-            // in this case the length of this key, is the tokenEND - tokenSTART
-            // in the printf() we have to put .* in front of s to only print a certain num chars
             int numCharsInKey = tokens[i].end - tokens[i].start;
             printf("Key in the config file is not found: %.*s\n\n", numCharsInKey, jsonConfigString + tokens[i].start);
             exit(EXIT_FAILURE);
@@ -243,10 +232,7 @@ void loadConfigStructFromConfigJSONString(char *jsonConfigString, config *c)
         exit(EXIT_FAILURE);
     } 
 
-  
-
     //if we dont have a value for the other 4 use the default
-    //THIS IS NOT ELSE IF because we need to check all of them 
     if (c->udpPayloadSize == -1){
         c->udpPayloadSize = DEFAULT_UDP_SIZE;
     } 
@@ -259,16 +245,4 @@ void loadConfigStructFromConfigJSONString(char *jsonConfigString, config *c)
     if (c->UDPPacketTTL == -1){
         c->UDPPacketTTL = DEFAULT_UDP_TTL;
     }
-
-    /*printf("Config:\n");
-    printf("IP: %s\n", c->IP);
-    printf("source port: %d\n", c->sourcePort);
-    printf("dest port: %d\n", c->destPort);
-    printf("dest port tcp head: %d\n", c->destPortTCPHead);
-    printf("dest port tcp tail: %d\n", c->destPortTCPTail);
-    printf("port tcp: %d\n", c->portTCP);
-    printf("udp payload: %d\n", c->udpPayloadSize);
-    printf("interMeasurementTime: %d\n", c->interMeasurementTime);
-    printf("numUDPPackets: %d\n", c->numUDPPackets);
-    printf("UDPPacketTTL: %d\n", c->UDPPacketTTL);*/
 }

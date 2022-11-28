@@ -30,17 +30,6 @@ struct ipheader
     unsigned int ip_dst;
 }; /* total ip header length: 20 bytes (=160 bits) */
 
-// TODO - may not need this?
-/* struct icmpheader {
- unsigned char icmp_type;
- unsigned char icmp_code;
- unsigned short int icmp_cksum;
- // The following data structures are ICMP type specific
- unsigned short int icmp_id;
- unsigned short int icmp_seq;
-}; // total icmp header length: 8 bytes (=64 bits)
-*/
-
 /* UDP Header */
 struct udpheader
 {
@@ -65,35 +54,20 @@ struct tcpheader
 
 config c;
 
-// use the time library to get the current time in milliseconds
+/* 
+we use the time library to get the current time in milliseconds so that we 
+can start our timer and find compression
+*/
 long long millis()
 {
     struct timeval te;
     gettimeofday(&te, NULL); // get current time
-    // this structure also has nano seconds if we need it  te.tv_nsec
     long long milliseconds = te.tv_sec * 1000LL + te.tv_usec / 1000; // calculate milliseconds
-    // printf("milliseconds: %lld\n", milliseconds);
     return milliseconds;
 }
 
-/*
-
-  1. open raw socket to SYN HEAD PORT
-  2. send a SYN packet
-  3. somehow receive the RST packet that the system sends to us when we send a SYN on a closed port
-  4. open a raw UDP socket
-  5. send the packet train
-  6. close UDP socket
-  7. open raw socket to SYN TAIL PORT
-  8. send a syn packet
-  9. get the RST packet from sending SYN on a closed port
-  10. use the timing difference from the first RST packet to the second RST packet to find the length of
-    packet train transmission
-
-
-*/
-
-unsigned short /* this function generates header checksums */
+/* this function generates header checksums */
+unsigned short 
 csum(unsigned short *buf, int nwords)
 {
     unsigned long sum;
@@ -104,6 +78,7 @@ csum(unsigned short *buf, int nwords)
     return ~sum;
 }
 
+/* This function sets up the ip and tcp header as it set their pointers */
 void setupIPandTCPHeader(struct ipheader *iph, struct tcpheader *tcph, struct sockaddr_in addrSynHead, char *datagram, int destPort)
 {
     iph->ip_hl = 5; // 0101
@@ -133,12 +108,12 @@ void setupIPandTCPHeader(struct ipheader *iph, struct tcpheader *tcph, struct so
     iph->ip_sum = csum((unsigned short *)datagram, iph->ip_len >> 1);
 }
 
+/* 
+This function sends the actual UDP packet train and depending on what we pass in it will send 
+high or low entropy 
+*/
 void sendPacketTrain(int sockfd, config c, struct sockaddr_in *servaddr, char *dataToSend, int numPacketsToSend)
 {
-
-    // int numBytesToSend = strlen(JSON_String);
-    // char test = 6000;
-
     // we need to make a packet ID, this is a 2 byte number
     // so we have to use bit shifting to split our
     // starting integer into 2 separate bytes
@@ -164,7 +139,6 @@ void sendPacketTrain(int sockfd, config c, struct sockaddr_in *servaddr, char *d
         // Then we need the left 8 bits, so just shift the whole number
         // right 8 bits and do the same and as above
         unsigned char idByteLeft = (packetID >> 8); //& 0xFF;
-
         // the size of the message is the number from the config
         //+2 because we have a 2 byte packet id
         unsigned char udpPacket[c.udpPayloadSize + 2];
@@ -175,14 +149,7 @@ void sendPacketTrain(int sockfd, config c, struct sockaddr_in *servaddr, char *d
         // copy the data into the udpPacket but dont go over
         // the ID
         strncpy(&udpPacket[2], dataToSend, c.udpPayloadSize);
-        /* for (size_t i = 2; i < c.udpPayloadSize + 2; i++)
-         {
-             printf("%d ", (int)udpPacket[i]);
-         }
-         printf("\n");*/
 
-       // printf("Sent packet %d\n", packetID);
-        // write(sockfd, test, 2);
         // MSG_CONFIRM is included in <sys/socket.h>
         sendto(sockfd, udpPacket, c.udpPayloadSize + 2, MSG_CONFIRM,
                (const struct sockaddr *)servaddr,
@@ -191,6 +158,9 @@ void sendPacketTrain(int sockfd, config c, struct sockaddr_in *servaddr, char *d
     printf("Sent packet train...\n");
 }
 
+/*
+This function sends the SYN packets, which are TCP raw sockets
+*/
 void sendSYNPacket(int sockId,struct ipheader *iph, struct tcpheader *tcph, struct sockaddr_in addrSynHead, char *datagram, int destPort){
   // fill in the tcp and ip header information
     setupIPandTCPHeader(iph, tcph, addrSynHead, datagram, destPort);
@@ -218,8 +188,7 @@ int main(int argc, char *argv[])
     loadConfigStructFromConfigJSONString(JSON_STRING, &c);
 
     //--setup socket info and options
-
-     struct sockaddr_in addrSynHead;
+    struct sockaddr_in addrSynHead;
     // setup SYN head address info
     addrSynHead.sin_family = AF_INET;
     addrSynHead.sin_port = htons(c.destPortTCPHead);
@@ -228,7 +197,6 @@ int main(int argc, char *argv[])
      // setup the UDP socket information
     struct sockaddr_in addrUDP;
     addrUDP.sin_family = AF_INET;
-    // TODO on the PDF the port is 9999 but should this come from the config file?
     addrUDP.sin_port = htons(c.destPort);
     addrUDP.sin_addr.s_addr = inet_addr(c.IP);
 
@@ -238,8 +206,6 @@ int main(int argc, char *argv[])
     addrSynTail.sin_port = htons(c.destPortTCPTail);
     addrSynTail.sin_addr.s_addr = inet_addr(c.IP);
 
-    // printf("SYN Head: %d   SYN Tail: %d\n", c.destPortTCPHead, c.destPortTCPTail);
-
     //------ OPEN ALL 3 SOCKETS -----
 
     //--- TCP RAW SOCKET TO SYN HEAD ----
@@ -248,10 +214,10 @@ int main(int argc, char *argv[])
     if (rawSockSYNHead < 0)
     {
         printf("Unable to create a socket\n");
-        exit(0);
+        exit(EXIT_FAILURE);
     }
 
-     // lets set the socket options so that the default IP and TCP header options are not automatically added
+     // set the socket options so that the default IP and TCP header options are not automatically added
     // in front of all the options we just set
     // the setsockopt function wants a "const int *" so we need to make a variable that way we can make
     // a const int * to it
@@ -272,16 +238,10 @@ int main(int argc, char *argv[])
     }
 
     //  set the dont fragment flag
-    //this failed 
-   /* int val = 1;
-    if ( setsockopt(sockUDP, IPPROTO_IP, IP_DF, &val, sizeof(val)) < 0){
-        printf("Could not set sockopt for DONT FRAGMENT FLAG\n");
-        //exit(1);
-    }*/
     int val = IP_PMTUDISC_DO;
     if(setsockopt(sockUDP, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val)) < 0) {
         printf("Could not set sockopt for DONT FRAGMENT FLAG\n");
-            // exit(1);
+        exit(EXIT_FAILURE);
     };
 
 
@@ -289,7 +249,7 @@ int main(int argc, char *argv[])
     int ttl = c.UDPPacketTTL; /* max = 255 */
     if ( setsockopt(sockUDP, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)) < 0){
         printf("Could not set sockopt for TTL\n");
-        //exit(1);
+        exit(EXIT_FAILURE);
     }
 
  //--- TCP RAW SOCKET TO SYN HEAD ----
@@ -349,20 +309,13 @@ int main(int argc, char *argv[])
 
     // the first two bytes are the ID so place these characters
     // start at index 2
-    // 168 100 151 99 236 70
     for (int i = 0; i < c.udpPayloadSize; i++)
     {
         char curByte;
         fscanf(fileRand, "%c", &curByte);
-        // printf("char %c   int:%d\n", curByte, (int)curByte);
-        // 0 to 999 i in for loop
-        // 2 to 1001 the index below
         highEntropy[i] = curByte;
-        // printf("%d ", (int) highEntropy[i]);
     }
-    // printf("\n");
 
-   
 
     //-------SEND THE ENTROPY PACKET TRAINS
     memset(datagram, 0, 4096);
@@ -376,7 +329,6 @@ int main(int argc, char *argv[])
     long long timeLowEntropy = millis() - startTime;
 
 
-    //
    int timeLeft = c.interMeasurementTime;
     while (timeLeft)
     {
@@ -406,8 +358,6 @@ int main(int argc, char *argv[])
         printf("The low entropy time was greater than high\n");
     }
 
-    printf("Low Entropy: %llu\n", timeLowEntropy);
-    printf("High Entropy: %llu\n", timeHighEntropy);
     printf("Time Difference:  %llu\n", timeDifference); 
     
   
